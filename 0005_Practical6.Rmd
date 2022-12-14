@@ -1,0 +1,277 @@
+---
+title: "Practical6"
+author: "Felipe"
+date: "2022-11-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Loading the Packages
+
+```{r}
+library(spatstat)
+library(here)
+library(sp)
+library(rgeos)
+library(maptools)
+library(tmap)
+library(sf)
+library(geojson)
+library(geojsonio)
+library(tmaptools)
+
+```
+Setting up data 
+
+
+```{r}
+
+##First, get the London Borough Boundaries
+LondonBoroughs <- st_read(here::here("statistical-gis-boundaries-london", "ESRI", "London_Borough_Excluding_MHW.shp"))
+
+```
+Ploting London
+
+```{r}
+library(stringr)
+BoroughMap <- LondonBoroughs %>%
+  dplyr::filter(str_detect(GSS_CODE, "^E09"))%>%
+  st_transform(., 27700)
+
+qtm(BoroughMap)
+
+
+
+```
+```{r}
+summary(BoroughMap)
+```
+```{r}
+##Now get the location of all Blue Plaques in the City
+BluePlaques <- st_read("https://s3.eu-west-2.amazonaws.com/openplaques/open-plaques-london-2018-04-08.geojson")%>%
+  st_transform(.,27700)
+```
+```{r}
+summary(BluePlaques)
+
+```
+
+```{r}
+#plot the blue plaques in the city
+tmap_mode("plot")
+tm_shape(BoroughMap) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaques) +
+  tm_dots(col = "blue")
+```
+```{r}
+#remove duplicates, in this case, distinct function have this role to clean the data
+library(tidyverse)
+
+library(sf)
+BluePlaques <- distinct(BluePlaques)
+
+```
+```{r}
+
+BluePlaquesSub <- BluePlaques[BoroughMap,]
+#check to see that they've been removed
+tmap_mode("plot")
+tm_shape(BoroughMap) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+
+
+```
+```{r}
+
+# add sparse=false to get the complete matrix.
+intersect_indices <-st_intersects(BoroughMap, BluePlaques)
+
+```
+
+6.5.3 - Spatial Joining
+
+
+```{r}
+
+Londonborough <- st_read(here::here("statistical-gis-boundaries-london", 
+                                    "ESRI", 
+                                    "London_Borough_Excluding_MHW.shp"))%>%
+  st_transform(., 27700)
+
+
+```
+
+```{r}
+OSM <- st_read(here::here("greater-london-latest-free.shp", 
+                          "gis_osm_pois_a_free_1.shp")) %>%
+  st_transform(., 27700) %>%
+  #select hotels only
+  filter(fclass == 'hotel')
+
+
+
+```
+```{r}
+
+join_example <-  st_join(OSM, Londonborough)
+
+nrow(join_example)
+
+```
+
+```{r}
+OSM <- st_read(here::here("greater-london-latest-free.shp", 
+                          "gis_osm_pois_a_free_1.shp")) %>%
+  st_transform(., 27700) %>%
+  #select hotels only
+  filter(fclass == 'hotel')
+
+
+
+```
+
+```{r}
+
+#London Borough data is already in 277000
+Londonborough <- st_read(here::here("statistical-gis-boundaries-london", 
+                                    "ESRI", 
+                                    "London_Borough_Excluding_MHW.shp"))%>%
+  st_transform(., 27700)
+
+```
+```{r}
+# read in the .csv
+# and make it into spatial data
+
+Airbnb <- read_csv("listings.csv") %>%
+  st_as_sf(., coords = c("longitude", "latitude"), 
+                   crs = 4326) %>%
+    st_transform(., 27700)%>%
+    #select entire places that are available all year
+    filter(room_type == 'Entire home/apt' & availability_365 =='365')
+
+
+# make a function for the join
+# functions are covered in practical 7
+# but see if you can work out what is going on
+# hint all you have to do is replace data1 and data2
+# with the data you want to use
+
+Joinfun <- function(data1, data2){
+
+output<- data1%>%
+  st_join(Londonborough,.) %>%
+  add_count(GSS_CODE, name="hotels_in_borough") 
+
+  return(output)
+}
+
+# use the function for hotels
+Hotels <- Joinfun(OSM, Londonborough)
+
+# then for airbnb
+Airbnb <- Joinfun(Airbnb, Londonborough)
+ 
+Hotels <- Hotels %>%
+  #at the moment each hotel is a row for the borough
+  #we just one one row that has number of airbnbs
+  group_by(., GSS_CODE, NAME)%>%
+  summarise(`Accomodation count` = unique(hotels_in_borough))
+
+Airbnb <- Airbnb %>%
+  group_by(., GSS_CODE, NAME)%>%
+  summarise(`Accomodation count` = unique(hotels_in_borough))
+
+
+
+```
+```{r}
+
+all_accomodation <- st_join(Hotels, Airbnb)
+
+head(all_accomodation)
+
+```
+
+```{r}
+all_accomodation <- st_join(Hotels, Airbnb, join = st_equals)
+
+head(all_accomodation)
+
+
+```
+```{r}
+#extract the borough
+
+# select by attribute
+Harrow <- BoroughMap %>%
+  filter(., NAME=="Harrow")
+
+#Check to see that the correct borough has been pulled out
+tm_shape(Harrow) +
+  tm_polygons(col = NA, alpha = 0.5)
+```
+```{r}
+#clip the data to our single borough
+BluePlaquesSub <- BluePlaques[Harrow,]
+#check that it's worked
+tmap_mode("plot")
+```
+
+```{r}
+
+tm_shape(Harrow) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+```
+
+```{r}
+
+#now set a window as the borough boundary
+window <- as.owin(Harrow)
+plot(window)
+
+
+
+```
+
+```{r}
+
+#create a sp object
+BluePlaquesSub<- BluePlaquesSub %>%
+  as(., 'Spatial')
+#create a ppp object
+BluePlaquesSub.ppp <- ppp(x=BluePlaquesSub@coords[,1],
+                          y=BluePlaquesSub@coords[,2],
+                          window=window)
+
+
+
+```
+
+```{r}
+
+BluePlaquesSub@coords[,1]
+
+
+```
+```{r}
+
+BluePlaquesSub.ppp %>%
+  plot(.,pch=16,cex=0.5, 
+       main="Blue Plaques Harrow")
+```
+6.6 Point pattern analysis
+
+
+
+
+
+
